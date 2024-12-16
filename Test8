@@ -1,0 +1,151 @@
+ARDUINO CODE  ORIGINAL CODE:
+#include <SPI.h>
+#include <MFRC522.h>
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include <Firebase_ESP_Client.h>
+#include <ArduinoJson.h>
+#include <addons/TokenHelper.h>
+#include <addons/RTDBHelper.h>
+#include <SoftwareSerial.h>
+
+
+// RFID Setup
+#define SS_PIN 2 // SDA
+#define RST_PIN 0 // RST
+MFRC522 rfid(SS_PIN, RST_PIN);
+
+
+// WiFi and Firebase Setup
+#define WIFI_SS "Hotspot"
+#define WIFI_PASSWORD "23456789"
+#define API_KEY "AIzaSyCi-2z5tjB8LLBbMCZeuewGi6tSQtF9iPg"
+#define DATABASE_URL "https://smart-way-payment-default-rtdb.firebaseio.com"
+#define USER_EMAIL "thirisha1227@gmail.com"
+#define USER_PASSWORD "Thirisha@2711"
+FirebaseData fbdo;
+FirebaseAuth auth;
+FirebaseConfig config;
+
+
+// Updated UIDs for lookup
+const char* uids[] = {"af14e91c", "3351e534", "8f13ea1f"}; // Add your UIDs for lookup
+
+
+// Define RX and TX pins for communication with PIC
+#define RX_PIN 3
+#define TX_PIN 1
+SoftwareSerial mySerial(RX_PIN, TX_PIN); // RX, TX
+
+
+void setup() {
+    Serial.begin(115200);
+    mySerial.begin(9600); // Communication with PIC
+
+
+    // Initialize RFID
+    SPI.begin();
+    rfid.PCD_Init();
+    Serial.println("Scan an RFID tag...");
+
+
+    // Connect to Wi-Fi
+    WiFi.begin(WIFI_SS, WIFI_PASSWORD);
+    Serial.print("Connecting to Wi-Fi");
+    while (WiFi.status() != WL_CONNECTED) {
+        Serial.print(".");
+        delay(300);
+    }
+    Serial.println();
+    Serial.print("Connected with IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.println();
+
+
+    // Set up Firebase configuration
+    config.api_key = API_KEY;
+    auth.user.email = USER_EMAIL;
+    auth.user.password = USER_PASSWORD;
+    config.database_url = DATABASE_URL;
+    Firebase.begin(&config, &auth);
+    Firebase.reconnectWiFi(true);
+}
+
+
+void loop() {
+    // Check for RFID card presence
+    if (!rfid.PICC_IsNewCardPresent()) {
+        return;
+    }
+    // Read RFID card
+    if (!rfid.PICC_ReadCardSerial()) {
+        return;
+    }
+
+
+    // Get UID as a string
+    String scannedUID = "";
+    for (byte i = 0; i < rfid.uid.size; i++) {
+        scannedUID += (rfid.uid.uidByte[i] < 0x10 ? "0" : "") + String(rfid.uid.uidByte[i], HEX);
+    }
+    Serial.println("Scanned UID: " + scannedUID);
+
+
+    // Match the scanned UID with predefined UIDs
+    for (int i = 0; i < sizeof(uids) / sizeof(uids[0]); i++) {
+        if (scannedUID.equalsIgnoreCase(uids[i])) {
+            Serial.println("User Found: " + String(uids[i]));
+            fetchData(uids[i]); // Fetch data for the matched UID
+            break;
+        }
+    }
+
+
+    // Halt PICC
+    rfid.PICC_HaltA();
+}
+void fetchData(const char* uid) {
+    // Set the paths for amount, name, and pin
+    String pathAmount = "UID/" + String(uid) + "/amount";
+    String pathName = "UID/" + String(uid) + "/name";
+    String pathPin = "UID/" + String(uid) + "/pin";
+
+
+    // Fetch and print the amount, name, and pin
+    String name = fetchName(pathName.c_str(), uid);
+    int amount = fetchAmount(pathAmount.c_str(), uid);
+    int pin = fetchPin(pathPin.c_str(), uid);
+    // Send formatted data to PIC
+    mySerial.print(String(name) + "," + String(amount) + "," + String(pin) + "\n");
+}
+
+
+String fetchName(const char* path, const char* uid) {
+    // Retrieve and return the name associated with the UID
+    if (Firebase.RTDB.get(&fbdo, path)) {
+        if (fbdo.dataType() == "string") {
+            return fbdo.stringData().c_str(); // Use stringData() for string retrieval
+        }
+    } else {
+        Serial.println("Error getting name for " + String(uid) + ": " + fbdo.errorReason());
+    }
+    return "Unknown"; // Default if not found
+}
+int fetchAmount(const char* path, const char* uid) {
+    // Retrieve and return the amount associated with the UID
+    if (Firebase.RTDB.getInt(&fbdo, path)) {
+        return fbdo.intData(); // Return amount from Firebase
+    } else {
+        Serial.println("Error getting amount for " + String(uid) + ": " + fbdo.errorReason());
+    }
+    return 0; // Default if not found
+}
+int fetchPin(const char* path, const char* uid) {
+    // Retrieve and return the pin associated with the UID
+    if (Firebase.RTDB.getInt(&fbdo, path)) {
+        return fbdo.intData(); // Return pin from Firebase
+    } else {
+        Serial.println("Error getting pin for " + String(uid) + ": " + fbdo.errorReason());
+    }
+    return 0; // Default if not found
+}
