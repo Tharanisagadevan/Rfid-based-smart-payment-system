@@ -1,0 +1,39 @@
+
+                              ESP8266 to Mobile Hotspot (prg)
+
+#include <ESP8266WiFi.h>
+
+
+const char* ssid = "TECNO SPARK Go 2020";  // Replace with your mobile hotspot SSID
+const char* password = "0987654321";  // Replace with your mobile hotspot password
+
+
+void setup() {
+  Serial.begin(115200); // Initialize serial communication
+  delay(10);
+
+
+  // Connect to Wi-Fi
+  Serial.println();
+  Serial.println("Connecting to WiFi...");
+  WiFi.begin(ssid, password);
+
+
+  // Wait for connection
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+
+
+  // Successful connection
+  Serial.println();
+  Serial.println("Connected to WiFi!");
+  Serial.print("IP address: ");
+  Serial.println(WiFi.localIP());
+}
+
+
+void loop() {
+  // Your code here
+}
