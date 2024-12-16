@@ -1,0 +1,639 @@
+
+ ORIGINAL CODE WITH PROJECT 
+
+#include <pic.h>
+#include <stdio.h>
+#include <string.h>
+
+// Configuration bits
+__CONFIG(FOSC_HS & WDTE_OFF & PWRTE_OFF & CP_OFF & BOREN_ON & LVP_OFF & CPD_OFF & WRT_OFF & DEBUG_OFF);
+#define _XTAL_FREQ 20000000  // Crystal frequency (20MHz)
+
+// Define control pins for the LCD
+#define rs RD2  // Register select
+#define en RD3  // Enable
+#define rw GND  // Ground pin
+
+// KEYPAD pins 
+#define R1 RB0 // RB0 TO C1
+#define R2 RB1 // RB1 TO C2
+#define R3 RB2 // RB2 TO C3 
+#define R4 RB3 // RB3 TO C4
+#define C1 RB4 // RB4 TO R1
+#define C2 RB5 // RB5 TO R2
+#define C3 RB6 // RB6 TO R3
+#define C4 RB7 // RB7 TO R4
+ 
+
+//for LCD init Function prototypes
+void lcd_init();
+void lcd_delay();
+void cmd(unsigned char a);
+void dat(unsigned char b);
+void show(const unsigned char *s);
+
+// for keypad function 
+void clear_input_str(char *str, unsigned char size);
+void int_to_str(unsigned int value, char *str);
+unsigned char key();
+void keyinit();
+unsigned int my_atoi(char *str);
+void add_product_amount();
+
+// for UART Function prototypes
+void uart_init(void);
+char uart_receive(void);
+void uart_receive_string(char *buffer, unsigned char size);
+void recive_user_data();
+
+// -----------------uart sender code
+void uart_init(void);
+void uart_send(char data);
+void uart_send_string(const char *str);
+
+
+// for lcd display user data  
+void power_by();
+void rfid_tag();
+void welcome_user();
+void balance();
+void payment_page();
+void total();
+
+void payment_pin_checking();
+void balance_pin_checking(); 
+void processing();
+void pay_done();
+void pay_fail();
+void thank_you();
+
+// other function 
+void lcd_delay();
+
+// keypad 
+unsigned char keypad[4][4] = {{'=', '+', '0', 'C'},{'H', '9', '8', '7'},{'P', '6', '5', '4'},{'S', '3', '2', '1'}};
+unsigned char rowloc, colloc;
+unsigned int total_amount = 0;
+char b;
+
+// Global variable
+char received_string[64]; // Buffer to store the received string (increased size)
+// Custom parsing of the received string
+char name[16], amount[16], pin[16];
+
+void main() {
+    // Port initialization
+    TRISD = 0;     // Set PORTD as output for LCD
+    uart_init();
+	keyinit();
+    lcd_init();
+	power_by();
+    while (1) {
+	    rfid_tag();
+    }
+}
+
+void lcd_init() {
+    cmd(0x02);  // Return home
+    cmd(0x28);  // 4-bit mode, 2 lines, 5x7 dots
+    cmd(0x0E);  // Display on, cursor blinking
+    cmd(0x06);  // Increment cursor
+    cmd(0x80);  // Move cursor to the first line
+    lcd_delay(); // Added delay after initialization
+}
+
+void cmd(unsigned char a) {
+    rs = 0; // Command mode
+    PORTD &= 0x0F; // Clear upper nibble
+    PORTD |= (a & 0xF0); // Send high nibble
+    en = 1; // Enable pulse
+    lcd_delay();
+    en = 0;
+
+    PORTD &= 0x0F; // Clear upper nibble
+    PORTD |= (a << 4); // Send low nibble
+    en = 1; // Enable pulse
+    lcd_delay();
+    en = 0;
+}
+
+void dat(unsigned char b) {
+    rs = 1; // Data mode
+    PORTD &= 0x0F; // Clear upper nibble
+    PORTD |= (b & 0xF0); // Send high nibble
+    en = 1; // Enable pulse
+    lcd_delay();
+    en = 0;
+
+    PORTD &= 0x0F; // Clear upper nibble
+    PORTD |= (b << 4); // Send low nibble
+    en = 1; // Enable pulse
+    lcd_delay();
+    en = 0;
+}
+
+void show(const unsigned char *s) {
+    unsigned char line = 0; // Track the current line
+    unsigned char count = 0; // Track character count on the current line
+
+    while (*s) {
+        // If we reach the end of a line (16 characters), move to the next line
+        if (count >= 16) {
+            count = 0;
+            line++;
+            // Move to the start of the next line, if within bounds
+            if (line < 4) {
+                cmd(0xC0 + (line * 0x40)); // Move to line 2, 3, or 4
+            } else {
+                // If we exceed 4 lines, stop processing
+                break;
+            }
+        }
+
+        // Send the character to the LCD
+        dat(*s++);
+        count++; // Increment the character count
+    }
+}
+void lcd_delay() {
+    unsigned int lcd_delay;
+    for (lcd_delay = 0; lcd_delay < 1000; lcd_delay++);
+}
+void uart_init(void) {
+    TRISC6 = 0;  // TX pin set as output
+    TRISC7 = 1;  // RX pin set as input
+    SPBRG = 129;  // Baud rate 9600 for 20MHz
+    BRGH = 1;     // High baud rate
+    SYNC = 0;     // Asynchronous mode
+    SPEN = 1;     // Enable serial port
+    TXEN = 1;     // Enable transmission
+    CREN = 1;     // Enable continuous reception
+    TX9 = 0;      // 8-bit transmission
+    RX9 = 0;      // 8-bit reception
+}
+void power_by() {
+    cmd(0x01); // Clear display
+    cmd(0x81); // Move cursor to the first line
+    show("BYTES IN BITS");
+    cmd(0xC2);
+    show("Smart RFID");
+    cmd(0x91);
+    show("Payment system");
+    cmd(0xD0);
+    show("Fire developers");
+    __delay_ms(2000);	
+}
+void rfid_tag(){
+	cmd(0x01);
+    cmd(0x84);
+    show("TAP YOUR");
+    cmd(0xC2);
+    show("> RFID CARD <");
+    cmd(0x90);
+    show("****************");
+    cmd(0xD0);
+    show("----------------"); 
+	recive_user_data();
+	__delay_ms(1000);
+	welcome_user();
+}
+void welcome_user() {
+    cmd(0x01); // Clear display
+    cmd(0x84);
+    show("WELCOME!");
+    cmd(0xC0);
+    show(name); // Display name
+    cmd(0x90);
+    show("1>Purchase");
+    cmd(0xD0);
+    show("2>Balance");
+
+    char b;
+    while(1) {
+        b = key(); // Read user input
+        if (b == '1') {
+            add_product_amount(); // Call function without recursion
+            break; 
+        }
+        if (b == '2') {
+            balance(); // Call function without recursion
+            break; 
+        }
+        if (b == 'H') {
+            rfid_tag(); // If needed, handle state without recursion
+            break;
+        }
+    }
+}
+// 4. for user account balance 
+void balance() {
+    balance_pin_checking() ; // Check the user's PIN
+    cmd(0x01); // Clear display
+    cmd(0x80); // Set cursor to the beginning of the first line
+    show("User name:");
+    cmd(0xC0); // Move cursor to the second line
+    show(name); // Display the user's name
+    cmd(0x90); // Move cursor to the third line
+    show("Account balance:"); // Prompt for balance
+    cmd(0xD0); // Move cursor to the fourth line
+    show(amount); // Display the account balance
+    while (1) {
+        char b = key(); // Read user input
+        if (b == 'H') {
+            rfid_tag(); // Call rfid_tag function
+            break; // Exit the loop after handling
+        }
+        if(b=='P'){
+			welcome_user();
+			break;
+		}
+    }
+}
+void add_product_amount() {
+    char input[5] = "    "; // Buffer for storing up to 4 digits
+    unsigned char count = 0; // Digit count
+    char b;
+
+    while (1) {
+        cmd(0x01); // Clear display
+        cmd(0x80);
+        show("Enter Amount $:"); // Prompt for price
+        cmd(0xC0); // Move to second line
+        show(input); // Display current input
+        cmd(0x90); // Move to third line
+        show("Total Amount"); // Display total label
+        cmd(0xD0); // Move to fourth line
+        char total_str[8]; // Enough space for total and null terminator
+        int_to_str(total_amount, total_str); // Convert total to string
+        show(total_str); // Display total amount
+        lcd_delay(); // Short delay
+        b = key();  // Read key input
+
+        // Check if the input is a digit and we can still add digits
+        if (b >= '0' && b <= '9' && count < 4) {
+            input[count++] = b; // Store the digit
+            input[count] = '\0'; // Null-terminate the string
+            dat(b); // Display the digit
+        } 
+        // Check for '+' or '-' to adjust the total amount
+        else if (b == '+' || b == '-') {
+            if (count > 0) {
+                // Convert entered digits to an integer
+                unsigned int product_price = my_atoi(input);
+                if (b == '+') {
+                    total_amount += product_price;
+                } else if (b == '-') {
+                    total_amount -= product_price;
+                }
+                count = 0; // Reset count for next input
+                clear_input_str(input, sizeof(input)); // Clear input buffer
+            }
+        } 
+        // Check if 'C' is pressed to clear inputs
+        else if (b == 'C') {
+            // Clear all inputs
+            total_amount = 0;
+            count = 0;
+            clear_input_str(input, sizeof(input));
+            cmd(0x01); // Clear display
+            show("Cleared! ");
+            lcd_delay(); // Short delay
+            cmd(0x80); // Move cursor back to the top
+        } 
+        // Check for '=' to go to the payment page
+        else if (b == '=') {
+            payment_page();
+            break; // Exit the loop after payment page is displayed
+        }
+        // Handle additional key inputs
+        else if (b == 'H') {
+            rfid_tag();
+            break; // Exit the loop after handling
+        } 
+        else if (b == 'P') {
+            welcome_user();
+            break; // Exit the loop after handling
+        } 
+        else if (b == 'S') {
+            payment_pin_checking();
+            break; // Exit the loop after handling
+        }
+    }
+}
+void payment_page() {
+    cmd(0x01); // Clear display
+    while(1) {
+        cmd(0x82); // Move cursor to the first line
+        show("PAYMENT PAGE"); // Display payment page title
+        cmd(0xC0); // Move to second line
+        show("TOTAL AMOUNT"); // Display total label
+        cmd(0x94); // Move to third line
+        char total_str[8]; // Enough space for total and null terminator
+        int_to_str(total_amount, total_str); // Convert total to string
+        show(total_str); // Display total amount
+        lcd_delay(); // Short delay
+        b = key(); // Read key input
+        if (b == 'S') { 
+			payment_pin_checking();
+            break; // Exit the loop
+        }
+        else if (b == 'P') {
+            welcome_user();
+            break; // Exit the loop after handling
+        }
+         else if (b == '=') {
+            payment_pin_checking();
+            break; // Exit the loop after handling
+        }
+
+    }
+}
+void payment_pin_checking() {
+    char entered_pin[5] = "    "; // Buffer for user input (4 digits + null terminator)
+    unsigned char count = 0; // Count for entered digits
+    unsigned char attempts = 3; // Maximum attempts
+    char b;
+
+    while (attempts > 0) {
+        cmd(0x01); // Clear display
+        cmd(0x80);
+        show("Enter PIN:");
+        cmd(0xC0); // Move to second line
+        show(entered_pin); // Display current entered PIN
+        cmd(0x90); // Move to third line
+        // Show remaining attempts
+        char attempts_str[20]; // Make sure to have enough space
+        sprintf(attempts_str, "Attempts: %d", attempts);
+        show(attempts_str);
+
+        b = key(); // Read user input
+
+        // Check if input is a digit and we can still add digits
+        if (b >= '0' && b <= '9' && count < 4) {
+            entered_pin[count++] = b; // Store the digit
+            entered_pin[count] = '\0'; // Null-terminate the string
+            dat(b); // Optionally display the digit
+        }
+        else if (b == 'P') {
+            welcome_user();
+            return; // Exit the function if the user opts to skip
+        }
+        // Check if 'C' is pressed to clear the input
+        else if (b == 'C') {
+            count = 0; // Reset count
+            strcpy(entered_pin, "    "); // Clear input buffer
+            cmd(0x01); // Clear display
+            show("Enter PIN:"); // Prompt again
+        }
+        // Check if '=' is pressed to verify the PIN
+        else if (b == '=') {
+            if (strcmp(entered_pin, pin) == 0) { // Compare with the global PIN
+                cmd(0x01);
+                cmd(0x80);
+                show("PIN Verified");
+                __delay_ms(1000);
+                // pay_done();
+                processing();
+                return; // Exit after successful verification
+            } else {
+                cmd(0x01);
+                cmd(0x80);
+                show("Wrong PIN!");
+                __delay_ms(1000);
+                count = 0; // Reset for next attempt
+                strcpy(entered_pin, "    "); // Clear input buffer
+                attempts--; // Decrease the attempts left
+                if (attempts > 0) {
+                    cmd(0x01); // Clear display
+                    show("Enter PIN:"); // Prompt again
+                } else {
+                    cmd(0x01);
+                    cmd(0x80);
+                    show("Max Attempts");
+                    __delay_ms(1000);
+                    pay_fail();
+                }
+            }
+        }
+    }
+}
+void processing() {
+    pay_done();
+}
+void balance_pin_checking() {
+    char entered_pin[5] = "    "; // Buffer for user input (4 digits + null terminator)
+    unsigned char count = 0; // Count for entered digits
+    char b;
+    while (1) {
+		cmd(0x01); // Clear display
+		cmd(0x80);
+  		show("Enter PIN:");
+        cmd(0xC0); // Move to second line
+        show(entered_pin); // Display current entered PIN
+
+        b = key(); // Read user input
+
+        // Check if input is a digit and we can still add digits
+        if (b >= '0' && b <= '9' && count < 4) {
+            entered_pin[count++] = b; // Store the digit
+            entered_pin[count] = '\0'; // Null-terminate the string
+            dat(b); // Optionally display the digit
+        }
+		else if (b=='P'){
+			welcome_user();
+		}
+        // Check if 'C' is pressed to clear the input
+        else if (b == 'C') {
+            count = 0; // Reset count
+            clear_input_str(entered_pin, sizeof(entered_pin)); // Clear input buffer
+            cmd(0x01); // Clear display
+            show("Enter PIN:"); // Prompt again
+        }
+        // Check if '=' is pressed to verify the PIN
+        else if (b == '=') {
+            if (strcmp(entered_pin, pin) == 0) { // Compare with the global PIN
+                cmd(0x01);
+                cmd(0x80);
+                show("PIN Verified");
+                __delay_ms(1000);
+                break; // Exit the loop after successful verification
+            } else {
+                cmd(0x01);
+                cmd(0x80);
+                show("Wrong PIN!");
+                __delay_ms(1000);
+                count = 0; // Reset for next attempt
+                clear_input_str(entered_pin, sizeof(entered_pin)); // Clear input buffer
+                cmd(0x01); // Clear display
+                show("Enter PIN:"); // Prompt again
+            }
+        }
+    }
+}
+// 8.for payment done
+void pay_done() { 
+    cmd(0x01);
+    cmd(0x80);
+    show("Payment Done");
+    __delay_ms(1000);
+	thank_you();
+}
+// 9.for  payment fail
+void pay_fail() {
+    cmd(0x01);
+    cmd(0x80);
+    show("Payment Fail");
+    __delay_ms(1000);
+	thank_you();
+}
+// 10. for thank you 
+void thank_you() {
+    cmd(0x01);
+    cmd(0x80);
+    show("Thank You");
+    cmd(0xc0);
+    show("Come Again");
+    __delay_ms(1000);
+	rfid_tag();
+}
+// keypad function
+void keyinit() {
+    TRISB = 0xF0;  
+    OPTION_REG &= 0x7F;
+}
+// key 
+unsigned char key() {
+    PORTB = 0x00;
+    while (C1 && C2 && C3 && C4);
+    while (!C1 || !C2 || !C3 || !C4) {
+        R1 = 0; R2 = R3 = R4 = 1;
+        if (!C1 || !C2 || !C3 || !C4) {
+            rowloc = 0;
+            break;
+        }
+        R2 = 0; R1 = 1;
+        if (!C1 || !C2 || !C3 || !C4) {
+            rowloc = 1;
+            break;
+        }
+        R3 = 0; R2 = 1;
+        if (!C1 || !C2 || !C3 || !C4) {
+            rowloc = 2;
+            break;
+        }
+        R4 = 0; R3 = 1;
+        if (!C1 || !C2 || !C3 || !C4) {
+            rowloc = 3;
+            break;
+        }
+    }
+    if (C1 == 0 && C2 != 0 && C3 != 0 && C4 != 0)
+        colloc = 0;
+    else if (C1 != 0 && C2 == 0 && C3 != 0 && C4 != 0)
+        colloc = 1;
+    else if (C1 != 0 && C2 != 0 && C3 == 0 && C4 != 0)
+        colloc = 2;
+    else if (C1 != 0 && C2 != 0 && C3 != 0 && C4 == 0)
+        colloc = 3;
+    while (C1 == 0 || C2 == 0 || C3 == 0 || C4 == 0);
+    return keypad[rowloc][colloc];
+}
+// for purchese helper function
+unsigned int my_atoi(char *str) {
+    unsigned int num = 0;
+    while (*str) {
+        num = num * 10 + (*str - '0'); // Convert char to int and accumulate
+        str++;
+    }
+    return num;
+}
+void clear_input_str(char *str, unsigned char size) {
+    for (unsigned char i = 0; i < size; i++) {
+        str[i] = ' ';  // Fill with spaces
+    }
+    str[size] = '\0';  // Null-terminate the string
+}
+void int_to_str(unsigned int value, char *str) {
+    unsigned char i = 0;
+    if (value == 0) {
+        str[i++] = '0';
+    } else {
+        while (value > 0) {
+            str[i++] = (value % 10) + '0';  // Get the last digit
+            value /= 10;                     // Remove the last digit
+        }
+    }
+    str[i] = '\0';  // Null-terminate the string
+
+    // Reverse the string
+    for (unsigned char j = 0; j < i / 2; j++) {
+        char temp = str[j];
+        str[j] = str[i - j - 1];
+        str[i - j - 1] = temp;
+    }
+}
+
+
+
+/*-------------------------------- UART CODE -----------------------------*/ 
+void recive_user_data() {
+    uart_receive_string(received_string, sizeof(received_string));
+    int i = 0, j = 0;
+    // Extract name
+    while (received_string[i] != ',' && received_string[i] != '\0') {
+        name[j++] = received_string[i++];
+    }
+    name[j] = '\0'; // Null-terminate the name
+    i++; // Move past the comma
+    // Extract amount
+    j = 0;
+    while (received_string[i] != ',' && received_string[i] != '\0') {
+        amount[j++] = received_string[i++];
+    }
+    amount[j] = '\0'; // Null-terminate the amount
+    i++; // Move past the comma
+    // Extract pin
+    j = 0;
+    while (received_string[i] != '\0' && received_string[i] != '\n' && received_string[i] != '\r') {
+        pin[j++] = received_string[i++];
+    }
+    pin[j] = '\0'; // Null-terminate the pin
+}
+
+// uart sender code update 
+
+// Function to send a single character via UART
+void uart_send(char data) {
+    while (!TXIF); // Wait for buffer to be empty
+    TXREG = data;  // Transmit data
+}
+
+// Function to send a string via UART
+void uart_send_string(const char *str) {
+    while (*str != '\0') {
+        uart_send(*str);
+        str++;
+    }
+}
+
+char uart_receive(void) {
+    while (!RCIF); // Wait for reception to complete
+    return RCREG;  // Return received data
+}
+
+void uart_receive_string(char *buffer, unsigned char size) {
+    unsigned char i = 0;
+    char ch;
+
+    while (i < size - 1) { // Leave space for null terminator
+        ch = uart_receive(); // Receive one character
+        if (ch == '\n' || ch == '\r') { // Check for newline or carriage return
+            buffer[i] = '\0'; // Null-terminate the string
+            break; // Exit loop if end of string
+        }
+        buffer[i++] = ch; // Store character in buffer
+    }
+    buffer[i] = '\0'; // Null-terminate the string
+}
+
+
